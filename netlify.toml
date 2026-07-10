@@ -1,0 +1,9 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Redirige todo a index.html para que la app (React) funcione bien al recargar la página
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
