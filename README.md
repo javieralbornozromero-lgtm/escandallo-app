@@ -51,3 +51,7 @@ Las funciones de IA (leer facturas, cierre de caja, crear escandallos desde foto
 Si en el futuro quiero (o quieres) hacerte cambios en la app, solo hay que:
 1. Sustituir los archivos del repositorio de GitHub por la nueva versión (arrastrando de nuevo, como al principio).
 2. Netlify vuelve a compilar y publicar automáticamente en cuanto detecta el cambio — no hace falta hacer nada más, ni reinstalarla en los móviles (la próxima vez que la abran, se actualiza sola).
+
+## Usar la misma app para otro bar
+
+Crea un repositorio nuevo en GitHub con estos mismos archivos, y un sitio nuevo en Netlify conectado a él. Tendrás una URL y una app completamente independiente, con sus propios datos.

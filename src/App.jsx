@@ -636,39 +636,44 @@ export default function App() {
     setInvoices(Array.isArray(data.invoices) ? data.invoices : []);
   };
 
+  // Carga los datos guardados (reutilizable: al abrir la app y desde "Sincronizar ahora").
+  const loadFromStorage = async () => {
+    let data = null;
+    try {
+      const res = await window.storage.get("appdata", false);
+      if (res && res.value) data = JSON.parse(res.value);
+    } catch (e) {
+      data = null;
+    }
+
+    // Migración: si no hay datos en el nuevo formato combinado, intenta recuperar
+    // los de una versión anterior de la app que usaba claves separadas.
+    if (!data) {
+      const legacyInit = await loadKey("initialized", null);
+      if (legacyInit) {
+        const [c, p, r, s, sa] = await Promise.all([
+          loadKey("config", null),
+          loadKey("products", null),
+          loadKey("recipes", null),
+          loadKey("suppliers", null),
+          loadKey("sales", null),
+        ]);
+        if (c || p || r || s || sa) {
+          data = { config: c || {}, products: p || [], recipes: r || [], suppliers: s || [], sales: sa || [], invoices: [] };
+        }
+      }
+    }
+
+    if (!data) {
+      data = { config: DEFAULT_CONFIG, products: DEFAULT_PRODUCTS, recipes: DEFAULT_RECIPES, suppliers: DEFAULT_SUPPLIERS, sales: demoSales(), invoices: [] };
+    }
+    return data;
+  };
+
   // initial load
   useEffect(() => {
     (async () => {
-      let data = null;
-      try {
-        const res = await window.storage.get("appdata", false);
-        if (res && res.value) data = JSON.parse(res.value);
-      } catch (e) {
-        data = null;
-      }
-
-      // Migración: si no hay datos en el nuevo formato combinado, intenta recuperar
-      // los de una versión anterior de la app que usaba claves separadas.
-      if (!data) {
-        const legacyInit = await loadKey("initialized", null);
-        if (legacyInit) {
-          const [c, p, r, s, sa] = await Promise.all([
-            loadKey("config", null),
-            loadKey("products", null),
-            loadKey("recipes", null),
-            loadKey("suppliers", null),
-            loadKey("sales", null),
-          ]);
-          if (c || p || r || s || sa) {
-            data = { config: c || {}, products: p || [], recipes: r || [], suppliers: s || [], sales: sa || [], invoices: [] };
-          }
-        }
-      }
-
-      if (!data) {
-        data = { config: DEFAULT_CONFIG, products: DEFAULT_PRODUCTS, recipes: DEFAULT_RECIPES, suppliers: DEFAULT_SUPPLIERS, sales: demoSales(), invoices: [] };
-      }
-
+      const data = await loadFromStorage();
       applyLoadedData(data);
       const ok = await saveKey("appdata", data);
       setStorageOk(ok);
@@ -764,7 +769,7 @@ export default function App() {
       `}</style>
 
       {/* Header */}
-      <header className="no-print sticky top-0 z-40" style={{ background: T.bottle, borderBottom: `3px double ${T.copper}` }}>
+      <header className="no-print sticky top-0 z-40" style={{ background: T.bottle, borderBottom: `3px double ${T.copper}`, paddingTop: "env(safe-area-inset-top)" }}>
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div
