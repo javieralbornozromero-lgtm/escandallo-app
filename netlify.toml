@@ -7,3 +7,21 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+# El index.html y el service worker nunca deben quedarse guardados en caché en el
+# navegador: si no, tras cada actualización el navegador puede seguir pidiendo
+# archivos de una versión antigua que ya no existen, y la app se queda en blanco.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/service-worker.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/manifest.json"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
