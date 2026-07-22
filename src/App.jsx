@@ -9,6 +9,7 @@ import {
   CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell
 } from "recharts";
 import * as XLSX from "xlsx";
+import Logo from "./Logo.jsx";
 
 /* ------------------------------------------------------------------ */
 /*  TOKENS                                                             */
@@ -166,6 +167,11 @@ function anthropicHeaders(config) {
     "anthropic-dangerous-direct-browser-access": "true",
   };
 }
+
+// Tipo de envase: es solo una etiqueta descriptiva (Botella, Lata, Paquete...) que se
+// combina con la cantidad/unidad ya existente, para que "Botella 700 ml" y "Botella
+// 900 ml", o "Paquete de 24 uds" y "Paquete de 12 uds", se distingan de un vistazo.
+const PACK_TYPES = ["Botella", "Lata", "Garrafa", "Paquete/Caja", "Barril", "Suelto", "Otro"];
 
 function unitCost(product) {
   if (!product || !product.packQuantity) return 0;
@@ -398,7 +404,48 @@ const inputStyle = {
 };
 
 function TextInput(props) {
-  return <input {...props} style={{ ...inputStyle, ...(props.style || {}) }} className={"w-full focus:ring-2 " + (props.className || "")} onFocus={(e) => (e.target.style.borderColor = T.copper)} onBlur={(e) => (e.target.style.borderColor = T.line)} />;
+  if (props.type !== "number") {
+    return <input {...props} style={{ ...inputStyle, ...(props.style || {}) }} className={"w-full focus:ring-2 " + (props.className || "")} onFocus={(e) => (e.target.style.borderColor = T.copper)} onBlur={(e) => (e.target.style.borderColor = T.line)} />;
+  }
+
+  // Campo numérico "a mano": el <input type="number"> nativo da problemas reales en
+  // móvil (no deja escribir coma decimal, y hay que borrar el 0 a mano antes de
+  // escribir). Aquí lo sustituimos por un campo de texto que admite coma o punto,
+  // selecciona todo el contenido al tocarlo, y sigue avisando a quien lo use con un
+  // número (igual que antes), para no tener que tocar el resto de la app.
+  const { type, value, onChange, style, className, onFocus, ...rest } = props;
+  const [raw, setRaw] = useState(value === undefined || value === null ? "" : String(value));
+
+  useEffect(() => {
+    const currentNum = parseFloat(String(raw).replace(",", "."));
+    if (value !== currentNum) {
+      setRaw(value === undefined || value === null ? "" : String(value));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const handleChange = (e) => {
+    const v = e.target.value;
+    if (!/^-?\d*[.,]?\d*$/.test(v)) return; // solo dígitos, un separador decimal y signo opcional
+    setRaw(v);
+    const normalized = v.replace(",", ".");
+    const num = normalized === "" || normalized === "-" ? 0 : parseFloat(normalized);
+    onChange && onChange({ target: { value: isNaN(num) ? 0 : num } });
+  };
+
+  return (
+    <input
+      {...rest}
+      type="text"
+      inputMode="decimal"
+      value={raw}
+      onChange={handleChange}
+      onFocus={(e) => { e.target.select(); e.target.style.borderColor = T.copper; if (onFocus) onFocus(e); }}
+      onBlur={(e) => (e.target.style.borderColor = T.line)}
+      style={{ ...inputStyle, ...(style || {}) }}
+      className={"w-full focus:ring-2 " + (className || "")}
+    />
+  );
 }
 
 function Select(props) {
@@ -577,11 +624,11 @@ const TABS = [
 // dispositivo/artefacto), es solo una forma de organizar quién ve y toca qué,
 // pensado para cuando le pases el dispositivo a un empleado.
 const ROLES = {
-  dueño: { label: "Dueño/a", tabs: TABS.map((t) => t.id) },
+  jefe: { label: "Jefe/a", tabs: TABS.map((t) => t.id) },
   encargado: { label: "Encargado/a", tabs: TABS.map((t) => t.id) },
   camarero: { label: "Camarero/a", tabs: ["ventas", "inventario", "consejos"] },
 };
-const ROLE_ORDER = ["dueño", "encargado", "camarero"];
+const ROLE_ORDER = ["jefe", "encargado", "camarero"];
 
 export default function App() {
   const [loading, setLoading] = useState(true);
@@ -600,8 +647,8 @@ export default function App() {
   const saveTimer = useRef(null);
 
   const activeUser = config.users?.find((u) => u.id === config.activeUserId) || null;
-  const currentRole = activeUser?.role || "dueño";
-  const visibleTabs = useMemo(() => TABS.filter((t) => (ROLES[currentRole]?.tabs || ROLES.dueño.tabs).includes(t.id)), [currentRole]);
+  const currentRole = activeUser?.role || "jefe";
+  const visibleTabs = useMemo(() => TABS.filter((t) => (ROLES[currentRole]?.tabs || ROLES.jefe.tabs).includes(t.id)), [currentRole]);
 
   // Si cambiamos de rol y la pestaña actual ya no está permitida, saltamos a la primera disponible.
   useEffect(() => {
@@ -784,6 +831,9 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <span className="hidden sm:flex" title="JR App · Studio">
+              <Logo size={26} />
+            </span>
             {config.users?.length > 0 && (
               <button
                 onClick={() => setShowUserSwitch(true)}
@@ -1316,7 +1366,7 @@ function ProductosTab({ products, setProducts, suppliers }) {
   const [deleteId, setDeleteId] = useState(null);
   const existingCategories = useMemo(() => Array.from(new Set(products.map((p) => p.category).filter(Boolean))).sort((a, b) => a.localeCompare(b, "es")), [products]);
 
-  const blank = () => ({ id: uid(), name: "", category: "", supplierId: suppliers[0]?.id || "", packQuantity: 0, unit: "ml", packPrice: 0 });
+  const blank = () => ({ id: uid(), name: "", category: "", supplierId: suppliers[0]?.id || "", packType: "Botella", packQuantity: 0, unit: "ml", packPrice: 0 });
 
   const save = () => {
     if (!draft.name.trim()) return;
@@ -1351,7 +1401,17 @@ function ProductosTab({ products, setProducts, suppliers }) {
                 {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </Select>
             </Field>
-            <Field label="Cantidad del envase"><TextInput type="number" value={draft.packQuantity} onChange={(e) => setDraft({ ...draft, packQuantity: Number(e.target.value) })} /></Field>
+            <Field label="Tipo de envase">
+              <Select value={draft.packType || "Otro"} onChange={(e) => setDraft({ ...draft, packType: e.target.value })}>
+                {PACK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </Select>
+            </Field>
+            <Field
+              label="Cantidad del envase"
+              hint={draft.packType === "Paquete/Caja" ? "Nº de unidades que trae el paquete" : draft.unit === "unit" ? "Nº de unidades" : "Contenido de cada envase"}
+            >
+              <TextInput type="number" value={draft.packQuantity} onChange={(e) => setDraft({ ...draft, packQuantity: Number(e.target.value) })} />
+            </Field>
             <Field label="Unidad">
               <Select value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })}>
                 <option value="ml">ml</option>
@@ -1375,6 +1435,7 @@ function ProductosTab({ products, setProducts, suppliers }) {
       )}
 
       <Card style={{ overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
         <table className="w-full" style={{ borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: T.bottle }}>
@@ -1389,7 +1450,10 @@ function ProductosTab({ products, setProducts, suppliers }) {
                 <td style={{ padding: "10px 14px", fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13.5 }}>{p.name}</td>
                 <td style={{ padding: "10px 14px", fontFamily: FONT_BODY, fontSize: 13, color: T.inkSoft }}>{p.category}</td>
                 <td style={{ padding: "10px 14px", fontFamily: FONT_BODY, fontSize: 13, color: T.inkSoft }}>{suppliers.find((s) => s.id === p.supplierId)?.name || "—"}</td>
-                <td style={{ padding: "10px 14px", fontFamily: FONT_MONO, fontSize: 12.5 }}>{p.packQuantity} {p.unit}</td>
+                <td style={{ padding: "10px 14px", fontFamily: FONT_BODY, fontSize: 12.5 }}>
+                  <div style={{ fontWeight: 600, color: T.ink }}>{p.packType || "Otro"}</div>
+                  <div style={{ fontFamily: FONT_MONO, fontSize: 12, color: T.inkSoft }}>{p.packQuantity} {p.unit}</div>
+                </td>
                 <td style={{ padding: "10px 14px", fontFamily: FONT_MONO, fontSize: 12.5 }}>{eur(p.packPrice)}</td>
                 <td style={{ padding: "10px 14px", fontFamily: FONT_MONO, fontSize: 12.5, color: T.copper }}>{unitCostDisplay(p)}</td>
                 <td style={{ padding: "10px 14px" }}>
@@ -1402,6 +1466,7 @@ function ProductosTab({ products, setProducts, suppliers }) {
             ))}
           </tbody>
         </table>
+        </div>
         {products.length === 0 && <p style={{ padding: 20, fontFamily: FONT_BODY, color: T.inkSoft, textAlign: "center" }}>No hay productos todavía.</p>}
       </Card>
 
@@ -1769,6 +1834,7 @@ function InventarioTab({ products, setProducts, config, setConfig }) {
                     <div className="flex items-start justify-between mb-2">
                       <div>
                         <div style={{ fontFamily: FONT_BODY, fontWeight: 700, fontSize: 14, color: T.ink }}>{p.name}</div>
+                        <div style={{ fontFamily: FONT_MONO, fontSize: 10.5, color: T.inkSoft }}>{p.packType || "Otro"} · {p.packQuantity} {p.unit}</div>
                         <div style={{ fontFamily: FONT_MONO, fontSize: 11, color: T.copper }}>{unitCostDisplay(p)}</div>
                       </div>
                       <StockBadge estado={estado} />
@@ -1895,6 +1961,30 @@ function FacturasTab({ suppliers, setSuppliers, setProducts, products, invoices,
     setPreview(URL.createObjectURL(f));
   };
 
+  // Empieza una factura en blanco para rellenarla a mano, sin foto ni IA — útil si
+  // no se quiere gastar en la clave API, o si la foto falla y hay prisa.
+  const startManualInvoice = () => {
+    setFile(null);
+    setPreview(null);
+    setError("");
+    setResult({
+      proveedor: "",
+      fecha: new Date().toISOString().slice(0, 10),
+      ivaGeneral: config?.ivaDefecto ?? 10,
+      items: [],
+    });
+  };
+
+  const addManualItem = () => {
+    setResult((r) => ({
+      ...r,
+      items: [
+        ...r.items,
+        { tempId: uid(), nombre: "", categoria: "", tipoEnvase: "Otro", cantidadFinal: 0, unidadFinal: "unit", precioTotal: 0, iva: r.ivaGeneral },
+      ],
+    }));
+  };
+
   // Prueba mínima sin imagen, solo para saber si la conexión con el modelo funciona
   // en este dispositivo. Ayuda a distinguir un problema de la foto de un problema general.
   const testConnection = async () => {
@@ -1952,8 +2042,8 @@ function FacturasTab({ suppliers, setSuppliers, setProducts, products, invoices,
               {
                 type: "text",
                 text: `Analiza esta factura o albarán de un proveedor de hostelería (bar/restaurante). Responde ÚNICAMENTE con un JSON válido y compacto (sin espacios ni saltos de línea innecesarios), sin texto adicional, sin explicación, sin bloques de código markdown, con esta forma exacta:
-{"proveedor":"nombre o cadena vacía","fecha":"YYYY-MM-DD o cadena vacía","ivaPorcentaje":numero,"items":[{"nombre":"...","cantidad":numero,"unidad":"ml|g|unit|l|kg","precioTotal":numero,"categoria":"...","ivaPorcentaje":numero}]}
-Reglas: usa "kg" cuando la columna diga "Kgs" o similar, "unit" para artículos que se cuentan por unidades. El campo "precioTotal" es el importe total de esa línea (columna "Importe" o "Total"), SIN IVA, tal como aparece en las líneas de producto. El "ivaPorcentaje" de nivel superior es el tipo general de la factura (normalmente 4, 10 o 21) que veas en el desglose final; si hay varios tipos, usa el que corresponda al mayor importe; si no aparece ningún IVA, pon 0. El "ivaPorcentaje" DENTRO de cada item es el tipo de IVA específico de ESE producto SOLO si la factura distingue tipos distintos por línea o categoría de producto; si no se distingue, pon 0 en ese campo (se usará el general). "categoria" es tu mejor estimación del tipo de producto en una o dos palabras en español (ej. "Bebidas", "Pescados y mariscos", "Carnes", "Fruta y verdura", "Lácteos", "Congelados", "Panadería", "Aceites y condimentos", "Limpieza", "Otros"). Si un dato no aparece en la imagen, usa "" o 0. No inventes datos que no estén en la imagen. Incluye todas las líneas de producto que veas, con nombres cortos.`,
+{"proveedor":"nombre o cadena vacía","fecha":"YYYY-MM-DD o cadena vacía","ivaPorcentaje":numero,"items":[{"nombre":"...","cantidad":numero,"unidad":"ml|g|unit|l|kg","precioTotal":numero,"categoria":"...","ivaPorcentaje":numero,"tipoEnvase":"Botella|Lata|Garrafa|Paquete/Caja|Barril|Suelto|Otro"}]}
+Reglas: usa "kg" cuando la columna diga "Kgs" o similar, "unit" para artículos que se cuentan por unidades. El campo "precioTotal" es el importe total de esa línea (columna "Importe" o "Total"), SIN IVA, tal como aparece en las líneas de producto. El "ivaPorcentaje" de nivel superior es el tipo general de la factura (normalmente 4, 10 o 21) que veas en el desglose final; si hay varios tipos, usa el que corresponda al mayor importe; si no aparece ningún IVA, pon 0. El "ivaPorcentaje" DENTRO de cada item es el tipo de IVA específico de ESE producto SOLO si la factura distingue tipos distintos por línea o categoría de producto; si no se distingue, pon 0 en ese campo (se usará el general). "categoria" es tu mejor estimación del tipo de producto en una o dos palabras en español (ej. "Bebidas", "Pescados y mariscos", "Carnes", "Fruta y verdura", "Lácteos", "Congelados", "Panadería", "Aceites y condimentos", "Limpieza", "Otros"). "tipoEnvase" es tu mejor estimación de cómo viene envasado ese producto según el nombre o el contexto (por ejemplo, refrescos y cervezas suelen venir en "Lata" o "Botella"; aceite o detergente en "Garrafa"; productos vendidos por cajas o packs en "Paquete/Caja"; si no se puede saber, usa "Otro"). Si un dato no aparece en la imagen, usa "" o 0. No inventes datos que no estén en la imagen. Incluye todas las líneas de producto que veas, con nombres cortos.`,
               },
             ],
           }],
@@ -1980,6 +2070,7 @@ Reglas: usa "kg" cuando la columna diga "Kgs" o similar, "unit" para artículos 
         unidadFinal: it.unidad === "l" ? "ml" : it.unidad === "kg" ? "g" : it.unidad || "unit",
         cantidadFinal: it.unidad === "l" || it.unidad === "kg" ? (it.cantidad || 0) * 1000 : it.cantidad || 0,
         categoria: it.categoria?.trim() || "Sin clasificar",
+        tipoEnvase: PACK_TYPES.includes(it.tipoEnvase) ? it.tipoEnvase : "Otro",
         iva: Number(it.ivaPorcentaje) > 0 ? Number(it.ivaPorcentaje) : ivaGeneral,
         supplierId: suppliers.find((s) => s.name?.toLowerCase() === (parsed.proveedor || "").toLowerCase())?.id || "",
       }));
@@ -2047,6 +2138,7 @@ Reglas: usa "kg" cuando la columna diga "Kgs" o similar, "unit" para artículos 
             name: it.nombre,
             category: it.categoria || "Sin clasificar",
             supplierId,
+            packType: it.tipoEnvase || "Otro",
             packQuantity: it.cantidadFinal,
             unit: it.unidadFinal,
             packPrice: it.precioTotal,
@@ -2088,15 +2180,15 @@ Reglas: usa "kg" cuando la columna diga "Kgs" o similar, "unit" para artículos 
 
   return (
     <div>
-      <SectionTitle eyebrow="Lectura automática" title="Facturas" />
+      <SectionTitle eyebrow="Facturas de proveedores" title="Facturas" />
       <Card style={{ padding: 20, marginBottom: 20 }}>
         <p style={{ fontFamily: FONT_BODY, fontSize: 13.5, color: T.inkSoft, marginBottom: 14 }}>
-          Sube una foto de la factura de un proveedor. La app leerá los productos, cantidades y precios para que
-          revises los datos y los añadas al catálogo de productos con un clic.
+          Sube una foto de la factura y la app leerá los productos, cantidades y precios automáticamente (necesita la clave API de Anthropic en Ajustes). Si prefieres no usar la lectura automática, también puedes rellenar la factura a mano.
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={(e) => onFile(e.target.files[0])} />
           <Btn variant="ghost" onClick={() => inputRef.current.click()}><Upload size={15} /> Elegir foto de la factura</Btn>
+          <Btn variant="ghost" onClick={startManualInvoice}><Pencil size={15} /> Añadir factura a mano</Btn>
           {file && <span style={{ fontFamily: FONT_MONO, fontSize: 12.5, color: T.inkSoft }}>{file.name}</span>}
           {file && !result && (
             <Btn variant="copper" onClick={analyze} disabled={analyzing}>
@@ -2155,15 +2247,18 @@ Reglas: usa "kg" cuando la columna diga "Kgs" o similar, "unit" para artículos 
           <div className="flex flex-col gap-2">
             {result.items.map((it) => (
               <div key={it.tempId} className="flex flex-wrap items-center gap-2 p-2 rounded" style={{ background: T.paper }}>
-                <TextInput value={it.nombre} onChange={(e) => updateItem(it.tempId, "nombre", e.target.value)} style={{ flex: 1, minWidth: 140 }} />
+                <TextInput value={it.nombre} onChange={(e) => updateItem(it.tempId, "nombre", e.target.value)} placeholder="Nombre del producto" style={{ flex: 1, minWidth: 140 }} />
                 <TextInput value={it.categoria} onChange={(e) => updateItem(it.tempId, "categoria", e.target.value)} list="categorias-existentes" placeholder="Categoría" style={{ width: 130 }} />
-                <TextInput type="number" value={it.cantidadFinal} onChange={(e) => updateItem(it.tempId, "cantidadFinal", e.target.value)} style={{ width: 90 }} />
+                <Select value={it.tipoEnvase || "Otro"} onChange={(e) => updateItem(it.tempId, "tipoEnvase", e.target.value)} style={{ width: 110 }}>
+                  {PACK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </Select>
+                <TextInput type="number" value={it.cantidadFinal} onChange={(e) => updateItem(it.tempId, "cantidadFinal", e.target.value)} placeholder="Cantidad" style={{ width: 90 }} />
                 <Select value={it.unidadFinal} onChange={(e) => updateItem(it.tempId, "unidadFinal", e.target.value)} style={{ width: 90 }}>
                   <option value="ml">ml</option>
                   <option value="g">g</option>
                   <option value="unit">unidad</option>
                 </Select>
-                <TextInput type="number" step="0.01" value={it.precioTotal} onChange={(e) => updateItem(it.tempId, "precioTotal", e.target.value)} style={{ width: 100 }} title="Precio sin IVA" />
+                <TextInput type="number" step="0.01" value={it.precioTotal} onChange={(e) => updateItem(it.tempId, "precioTotal", e.target.value)} placeholder="Precio" style={{ width: 100 }} title="Precio sin IVA" />
                 <div style={{ position: "relative" }}>
                   <TextInput type="number" step="0.5" value={it.iva} onChange={(e) => updateItem(it.tempId, "iva", e.target.value)} style={{ width: 70, paddingRight: 18 }} title="IVA de este producto" />
                   <span style={{ position: "absolute", right: 8, top: 9, fontFamily: FONT_MONO, fontSize: 11, color: T.inkSoft, pointerEvents: "none" }}>%</span>
@@ -2175,7 +2270,8 @@ Reglas: usa "kg" cuando la columna diga "Kgs" o similar, "unit" para artículos 
               {existingCategories.map((c) => <option key={c} value={c} />)}
             </datalist>
           </div>
-          {result.items.length === 0 && <p style={{ fontFamily: FONT_BODY, color: T.inkSoft }}>No se detectaron artículos. Puedes cerrar esto y meterlos a mano en Productos.</p>}
+          <Btn variant="ghost" onClick={addManualItem} style={{ marginTop: 10 }}><Plus size={14} /> Añadir línea</Btn>
+          {result.items.length === 0 && <p style={{ fontFamily: FONT_BODY, color: T.inkSoft, marginTop: 10 }}>Todavía no hay productos en esta factura. Añade una línea con el botón de arriba.</p>}
 
           {result.items.length > 0 && (() => {
             const subtotal = result.items.reduce((sum, it) => sum + (Number(it.precioTotal) || 0), 0);
@@ -2472,6 +2568,7 @@ function VentasTab({ sales, setSales, recipes, products, setProducts, config }) 
       </div>
 
       <Card>
+        <div style={{ overflowX: "auto" }}>
         <table className="w-full" style={{ borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: T.bottle }}>
@@ -2495,6 +2592,7 @@ function VentasTab({ sales, setSales, recipes, products, setProducts, config }) 
             })}
           </tbody>
         </table>
+        </div>
         {sales.length === 0 && <p style={{ padding: 20, textAlign: "center", fontFamily: FONT_BODY, color: T.inkSoft }}>Todavía no hay ventas registradas.</p>}
       </Card>
     </div>
@@ -2654,6 +2752,7 @@ function InformesTab({ sales, recipes, products, config }) {
           <div><div style={{ fontFamily: FONT_MONO, fontSize: 22, fontWeight: 600, color: T.sage }}>{eur(margin)} ({pct(marginPct)})</div><div style={{ fontFamily: FONT_BODY, fontSize: 11, color: T.inkSoft, textTransform: "uppercase" }}>Margen</div></div>
         </div>
 
+        <div style={{ overflowX: "auto" }}>
         <table className="w-full" style={{ borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ borderBottom: `2px solid ${T.ink}` }}>
@@ -2674,6 +2773,7 @@ function InformesTab({ sales, recipes, products, config }) {
             ))}
           </tbody>
         </table>
+        </div>
         {rows.length === 0 && <p style={{ fontFamily: FONT_BODY, color: T.inkSoft, padding: "20px 0", textAlign: "center" }}>No hay ventas registradas en este periodo.</p>}
       </Card>
     </div>
@@ -2886,6 +2986,7 @@ function GastosTab({ invoices, setInvoices, suppliers, config }) {
       </Card>
 
       <Card>
+        <div style={{ overflowX: "auto" }}>
         <table className="w-full" style={{ borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: T.bottle }}>
@@ -2938,6 +3039,7 @@ function GastosTab({ invoices, setInvoices, suppliers, config }) {
             ))}
           </tbody>
         </table>
+        </div>
         {filtered.length === 0 && <p style={{ padding: 20, textAlign: "center", fontFamily: FONT_BODY, color: T.inkSoft }}>No hay facturas registradas en este periodo.</p>}
       </Card>
 
@@ -3011,7 +3113,7 @@ function AjustesTab({ config, setConfig, onResetClick, storageOk, onExport, onIm
   const [local, setLocal] = useState(config);
   useEffect(() => setLocal(config), [config]);
   const importRef = useRef(null);
-  const isOwner = currentRole === "dueño";
+  const isOwner = currentRole === "jefe";
 
   const save = () => setConfig(local);
 
@@ -3019,7 +3121,7 @@ function AjustesTab({ config, setConfig, onResetClick, storageOk, onExport, onIm
   const applyPreset = (preset) => setLocal((l) => ({ ...l, colors: { ...preset.colors } }));
   const resetPalette = () => setLocal((l) => ({ ...l, colors: { ...DEFAULT_PALETTE } }));
 
-  // ── Gestión de usuarios (solo Dueño) ──
+  // ── Gestión de usuarios (solo Jefe) ──
   const [userDraft, setUserDraft] = useState(null);
   const [deleteUserId, setDeleteUserId] = useState(null);
   const blankUser = () => ({ id: uid(), name: "", role: "camarero", pin: "" });
@@ -3051,6 +3153,10 @@ function AjustesTab({ config, setConfig, onResetClick, storageOk, onExport, onIm
           <TextInput value={local.barName} onChange={(e) => setLocal({ ...local, barName: e.target.value })} style={{ maxWidth: 320 }} />
         </Field>
       </Card>
+
+      <div className="flex items-center justify-center" style={{ padding: "8px 0 20px" }}>
+        <Logo size={30} showWordmark textColor={T.ink} dimColor={T.inkSoft} />
+      </div>
 
       <Card style={{ padding: 20, marginBottom: 20 }}>
         <h3 style={{ fontFamily: FONT_DISPLAY, fontSize: 18, marginBottom: 4 }}>Clave API de Anthropic</h3>
@@ -3159,7 +3265,7 @@ function AjustesTab({ config, setConfig, onResetClick, storageOk, onExport, onIm
         <Card style={{ padding: 20, marginBottom: 20 }}>
           <h3 style={{ fontFamily: FONT_DISPLAY, fontSize: 18, marginBottom: 4 }}>Usuarios</h3>
           <p style={{ fontFamily: FONT_BODY, fontSize: 12.5, color: T.inkSoft, marginBottom: 14 }}>
-            Crea un usuario por persona con un PIN de 4 dígitos. Sirve para que cada uno, al entrar con su PIN desde el botón de arriba a la derecha, vea solo lo que le corresponde: <strong>Dueño/a</strong> y <strong>Encargado/a</strong> ven toda la app; <strong>Camarero/a</strong> solo ve Ventas, Inventario y Consejos. Esto organiza el acceso, pero no es una contraseña de seguridad real: todo sigue guardado en este mismo dispositivo.
+            Crea un usuario por persona con un PIN de 4 dígitos. Sirve para que cada uno, al entrar con su PIN desde el botón de arriba a la derecha, vea solo lo que le corresponde: <strong>Jefe/a</strong> y <strong>Encargado/a</strong> ven toda la app; <strong>Camarero/a</strong> solo ve Ventas, Inventario y Consejos. Esto organiza el acceso, pero no es una contraseña de seguridad real: todo sigue guardado en este mismo dispositivo.
           </p>
 
           {userDraft && (
